@@ -4,6 +4,7 @@
 #include "DHTesp.h"
 #include <FirebaseESP32.h>
 #include <HTTPClient.h>
+#include <ArduinoJson.h>
 
 #include "addons/TokenHelper.h"
 #include "addons/RTDBHelper.h"
@@ -14,14 +15,19 @@
 #define FIREBASE_AUTH "YRW2Reo4174TgB49Oj4p7mBldGAbq0wr6mRmhgEW" 
 #define FIREBASE_HOST "https://aplikasi-jemuran-iot-default-rtdb.asia-southeast1.firebasedatabase.app/" 
 
+const char* timeAPI = "http://worldtimeapi.org/api/timezone/Asia/Jakarta";
 const int LDR = 13;
 int HUJAN = 14;
 int DHT_PIN = 15;
 
 int pos = 0;
 int value = 0;
-bool buka = false;
+bool buka = true;
 String cuaca = "";
+String kontrolmode = "";
+
+unsigned long previousMillis = 0;
+unsigned long interval = 30000;
 
 DHTesp dhtSensor;
 Servo servo;
@@ -51,68 +57,87 @@ void setup(){
 }
 
 void loop(){
-  TempAndHumidity dhtData = dhtSensor.getTempAndHumidity();
-  Serial.print("suhu:");
-  Serial.println(dhtData.temperature);
-  Serial.print("cahaya:");
-  Serial.println(digitalRead(13));
-  Serial.print("hujan:");
-  Serial.println(digitalRead(HUJAN));
-  String basah = "";
-  String temp = "";
-  String cahaya = "";
 
-  if (digitalRead(13) == 0){
-    cahaya = "cerah";
-  }else{
-    cahaya = "gelap";
-  }
-  if (dhtData.temperature >= 30){
-    temp = "panas";
-  }else{
-    temp = "dingin";
-  }
-  if(digitalRead(HUJAN) == 0){
-    basah = "ya";
-  }else{
-    basah = "tidak";
-  }
-  lookUpTableFuzzy(basah, cahaya, temp);
-  Serial.println(cuaca);
+    unsigned long currentMillis = millis();
+    // Jika WiFi mati, menyambung ulang otomatis, aktifkan mode atap otomatis
+    if ((WiFi.status() != WL_CONNECTED) && (currentMillis - previousMillis >=interval)) {
+      Serial.print(millis());
+      Serial.println("Reconnecting to WiFi...");
+      WiFi.disconnect();
+      WiFi.reconnect();
+      previousMillis = currentMillis;
 
-  Firebase.setStringAsync(firebaseData, "/Sensor/data/suhu", dhtData.temperature);
-  Firebase.setStringAsync(firebaseData, "/Sensor/data/kelembapan", dhtData.humidity);
-  
-  if (Firebase.setString(firebaseData, "/Sensor/data/cuaca", cuaca))
-    {
-      Serial.println("Berhasil Kirim Cuaca");
-    }
-    else
-    {
-      Serial.println("Gagal");
-      Serial.println("Keterangan gagal : " + firebaseData.errorReason());
-    }
-
-
-  if (Firebase.getString(firebaseData, "/kontrol/mode")){
-    Serial.println(firebaseData.stringData());
-
-    if (firebaseData.stringData() == "otomatis") {
-      
       if (((cuaca == "Mendung") || (cuaca == "Hujan")) && buka){
-        tutupAtap();
-      } else if(((cuaca == "Cerah") || (cuaca == "Berawan")) && !buka){
+          tutupAtap();
+        } else if(((cuaca == "Cerah") || (cuaca == "Berawan")) && !buka){
+          bukaAtap();
+        }
+    }
+    
+    TempAndHumidity dhtData = dhtSensor.getTempAndHumidity(); 
+    String basah = "";
+    String temp = "";
+    String cahaya = "";
+  
+    if (digitalRead(13) == 0){
+      cahaya = "cerah";
+    }else{
+      cahaya = "gelap";
+    }
+    if (dhtData.temperature >= 30){
+      temp = "panas";
+    }else{
+      temp = "dingin";
+    }
+    if(digitalRead(HUJAN) == 0){
+      basah = "ya";
+    }else{
+      basah = "tidak";
+    }
+    lookUpTableFuzzy(basah, cahaya, temp);
+    Serial.println(cuaca);
+  
+    Firebase.setStringAsync(firebaseData, "/Sensor/data/suhu", dhtData.temperature);
+    Firebase.setStringAsync(firebaseData, "/Sensor/data/kelembapan", dhtData.humidity);
+    
+    if (Firebase.setString(firebaseData, "/Sensor/data/cuaca", cuaca))
+      {
+        Serial.println("Berhasil Kirim Cuaca");
+      }
+      else
+      {
+        Serial.println("Gagal");
+        Serial.println("Keterangan gagal : " + firebaseData.errorReason());
+      }
+  
+  
+    if (Firebase.getString(firebaseData, "/kontrol/mode")){
+      Serial.println(firebaseData.stringData());
+      kontrolmode = firebaseData.stringData();
+      Serial.println(kontrolmode);
+  
+      if (kontrolmode == "otomatis") {
+        
+        if (((cuaca == "Mendung") || (cuaca == "Hujan")) && buka){
+          tutupAtap();
+          sendNotifToFirebase("Cuaca mendung/hujan, atap tertutup");
+          addLogData("Cuaca mendung/hujan, atap tertutup");
+        } else if(((cuaca == "Cerah") || (cuaca == "Berawan")) && !buka){
+          bukaAtap();
+          sendNotifToFirebase("Cuaca cerah, atap terbuka");
+          addLogData("Cuaca cerah, atap terbuka");
+        }
+      }
+      else if (kontrolmode == "buka atap" && !buka){ 
         bukaAtap();
       }
+      else if (kontrolmode == "tutup atap" && buka){
+        tutupAtap();
+      }
     }
-    else if (firebaseData.stringData() == "buka atap" && !buka){ 
-      bukaAtap();
-    }
-    else if (firebaseData.stringData() == "tutup atap" && buka){
-      tutupAtap();
-    }
-  }
-  delay(3000);
+    Firebase.setIntAsync(firebaseData, "/status/active", rand());
+    delay(3000);
+  
 }
   
 
@@ -133,7 +158,7 @@ void bukaAtap(){
       Serial.println("------------------------------------");
       Serial.println();
     }
-   sendNotifToFirebase("Cuaca cerah, atap terbuka");
+//   sendNotifToFirebase("Cuaca cerah, atap terbuka");
 }
 
 void tutupAtap(){
@@ -153,7 +178,6 @@ void tutupAtap(){
       Serial.println("------------------------------------");
       Serial.println();
     }
-     sendNotifToFirebase("Cuaca mendung/hujan, atap tertutup");
   
 }
 
@@ -164,10 +188,10 @@ void sendNotifToFirebase(String message) {
   String url = "https://fcm.googleapis.com/fcm/send";
 
   String data = "{" ;
-  data = data + "\"to\": \"fZY7kmbMQou8kyX7k39Hvc:APA91bEL39Hkx98CgfRLH7QHEoRfBvXKxemHAg6dHnk3VlGpPsSIEIKtA-PoqkTJKKi7BU83Win0Iw58ehMmhr1kENl2G6jDmDJ0HtR0zcGQ_c0c7GkWR4-U4I2cnG3l4rn7VbANAHtv\"," ;
+  data = data + "\"to\": \"eLMp4LhRS3eE6cUdacfzBl:APA91bF0v1inKTXjmsryXcdc5ertHytMmvPYvsAWHCjxhtpaZwUWcRS6PKDlmLohUzSc02hJp8HTOTCqnKfVfCqtK_BaDd4BssyrXQU5iK-GP9DWofNfcjUmHyYLZe8q2F_ztq6u3Q3-\"," ;
   data = data + "\"notification\": {" ; 
   data = data + "\"body\":\"" + message +"\"," ;
-  data = data + "\"title\" : \"Sistem Jemuran\", \"subtitle\" : \"Sistem Jemuran\"" ; 
+  data = data + "\"title\" : \"Sistem Jemuran\", \"subtitle\" : \"Sistem Jemuran\", \"sound\" : \"default\"" ; 
   data = data + "} }" ;
 
   Serial.println(data);
@@ -182,6 +206,49 @@ void sendNotifToFirebase(String message) {
 
 }
 
+String getTime() {
+  HTTPClient http;
+  http.useHTTP10(true);
+  http.begin(timeAPI);
+  http.GET();
+  String result = http.getString();
+
+  DynamicJsonDocument doc(2048);
+  DeserializationError error = deserializeJson(doc, result);
+
+  // Test if parsing succeeds.
+  if (error) {
+    Serial.print("deserializeJson() failed: ");
+    Serial.println(error.c_str());
+  }
+
+  String timenow = doc["datetime"].as<String>();
+  http.end();
+  String valid_time = timenow.substring(0, 10) + ", (" + timenow.substring(11, 16) + " WIB)"; 
+  Serial.println(valid_time);
+  return valid_time;
+}
+
+void addLogData(String message) {
+  HTTPClient http;
+  String response;
+
+  String url = "https://aplikasi-jemuran-iot-default-rtdb.asia-southeast1.firebasedatabase.app/log_data.json";
+
+  String data = "{\"data\": \"" + message + "\",\"time\": \"" + getTime() + "\"}";
+
+  Serial.println(data);
+
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  
+  http.POST(data);
+  response = http.getString();
+  Serial.println(response);
+
+}
+
+
 void lookUpTableFuzzy(String basah, String cahaya, String temperature){
 
   if(basah == "ya" && cahaya == "gelap" && temperature == "dingin"){
@@ -191,7 +258,7 @@ void lookUpTableFuzzy(String basah, String cahaya, String temperature){
   }else if(basah == "ya" && cahaya == "cerah" && temperature == "dingin"){
     cuaca = "Hujan";
   }else if(basah == "ya" && cahaya == "cerah" && temperature == "panas"){
-    cuaca = "Cerah";
+    cuaca = "Hujan";
   }else if(basah == "tidak" && cahaya == "gelap" && temperature == "dingin"){
     cuaca = "Mendung";
   }else if(basah == "tidak" && cahaya == "gelap" && temperature == "panas"){
