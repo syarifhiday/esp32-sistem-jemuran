@@ -12,7 +12,7 @@
 #define WIFI_SSID "Redmi 9"
 #define WIFI_PASSWORD "pppppppp"
 
-#define FIREBASE_AUTH "YRW2Reo4174TgB49Oj4p7mBldGAbq0wr6mRmhgEW" 
+#define FIREBASE_AUTH "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX" 
 #define FIREBASE_HOST "https://aplikasi-jemuran-iot-default-rtdb.asia-southeast1.firebasedatabase.app/" 
 
 const char* timeAPI = "http://worldtimeapi.org/api/timezone/Asia/Jakarta";
